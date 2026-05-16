@@ -1283,7 +1283,7 @@ impl<DbT: InputSource> ShieldingSelector for GreedyInputSelector<DbT> {
         let input_total = transparent_inputs
             .iter()
             .map(|utxo| utxo.value())
-            .try_fold(Zatoshis::ZERO, |acc, v| (acc + v))
+            .try_fold(Zatoshis::ZERO, |acc, v| acc + v)
             .ok_or(InputSelectorError::Selection(
                 GreedyInputSelectorError::Balance(BalanceError::Overflow),
             ))?;
