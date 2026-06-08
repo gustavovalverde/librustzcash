@@ -171,6 +171,10 @@ workspace.
   - `input_count_in_pool`, `output_count_in_pool`, `change_count_in_pool`
   - `orchard_action_count`, the number of Orchard actions a step requires
     (the greater of its Orchard spends and its Orchard outputs plus change).
+- `zcash_client_backend::data_api::error::Error::ExpiryHeightBelowTargetHeight`
+  (behind the `pczt` feature flag), returned by `create_pczt_from_proposal`
+  when the caller-supplied `target_expiry_height` is a nonzero height below
+  the proposal's minimum target height.
 
 ### Changed
 - When a transaction spends Orchard notes once the Ironwood pool is active, its
@@ -294,6 +298,23 @@ workspace.
   `zcash_primitives::transaction::fees::FeeRule::fee_required`. Code that calls
   `fee_required` directly or implements the trait must thread through the number
   of Ironwood actions, passing `0` for transactions without an Ironwood bundle.
+- `zcash_client_backend::data_api::wallet::create_pczt_from_proposal` now takes
+  an additional `target_expiry_height: Option<BlockHeight>` argument. When set,
+  it replaces the builder-derived expiry on `PcztParts` before the Creator runs,
+  so the IO Finalizer signs dummy actions against the caller-pinned sighash. A
+  post-Creator Updater that mutates `Global::expiry_height` cannot reach the
+  same result because `IoFinalizer::finalize_io` consumes each dummy's
+  `dummy_sk`, leaving the dummy `spend_auth_sig` over a stale sighash and the
+  Extractor returning `SighashMismatch`. Existing callers should pass `None`
+  to preserve the prior behaviour. A nonzero `target_expiry_height` below the
+  proposal's minimum target height is rejected with
+  `Error::ExpiryHeightBelowTargetHeight` before any transaction building
+  occurs; a `target_expiry_height` of zero, which disables expiry, is exempt.
+- The signature of
+  `zcash_client_backend::data_api::testing::TestState::create_pczt_from_proposal`
+  now takes the same `target_expiry_height: Option<BlockHeight>` argument as
+  `create_pczt_from_proposal`. This only affects users of the
+  `test-dependencies` feature.
 
 ### Removed
 - `zcash_client_backend::data_api::WalletUtxo` (use `WalletTransparentOutput`
