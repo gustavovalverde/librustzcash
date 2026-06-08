@@ -219,6 +219,15 @@ workspace.
   unspendable data outputs and skipped silently, instead of being logged as
   unsupported script kinds. Other unrecognized transparent script kinds continue to
   be logged.
+- `zcash_client_backend::data_api::wallet::create_pczt_from_proposal` now takes
+  an additional `target_expiry_height: Option<BlockHeight>` argument. When set,
+  it replaces the builder-derived expiry on `PcztParts` before the Creator runs,
+  so the IO Finalizer signs dummy actions against the caller-pinned sighash. A
+  post-Creator Updater that mutates `Global::expiry_height` cannot reach the
+  same result because `IoFinalizer::finalize_io` consumes each dummy's
+  `dummy_sk`, leaving the dummy `spend_auth_sig` over a stale sighash and the
+  Extractor returning `SighashMismatch`. Existing callers should pass `None`
+  to preserve the prior behaviour.
 
 ### Removed
 - `zcash_client_backend::data_api::WalletUtxo` (use `WalletTransparentOutput`
