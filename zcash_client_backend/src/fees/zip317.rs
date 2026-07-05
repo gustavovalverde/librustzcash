@@ -389,7 +389,7 @@ mod tests {
                     #[cfg(feature = "orchard")]
                     false,
                     None,
-                    &AccountMeta::new(Some(PoolMeta::new(existing_notes, total)), None),
+                    &AccountMeta::new(Some(PoolMeta::new(existing_notes, total)), None, None),
                 )
             };
 
@@ -447,6 +447,7 @@ mod tests {
                 &AccountMeta::new(
                     Some(PoolMeta::new(0, Zatoshis::ZERO)),
                     Some(PoolMeta::new(0, Zatoshis::ZERO)),
+                    None,
                 ),
             );
 
@@ -493,6 +494,7 @@ mod tests {
                 &AccountMeta::new(
                     Some(PoolMeta::new(0, Zatoshis::ZERO)),
                     Some(PoolMeta::new(0, Zatoshis::ZERO)),
+                    None,
                 ),
             );
 
@@ -533,6 +535,7 @@ mod tests {
                 &AccountMeta::new(
                     Some(PoolMeta::new(0, Zatoshis::ZERO)),
                     Some(PoolMeta::new(0, Zatoshis::ZERO)),
+                    None,
                 ),
             );
 
@@ -581,6 +584,7 @@ mod tests {
                 &AccountMeta::new(
                     Some(PoolMeta::new(0, Zatoshis::ZERO)),
                     Some(PoolMeta::new(0, Zatoshis::ZERO)),
+                    None,
                 ),
             );
 

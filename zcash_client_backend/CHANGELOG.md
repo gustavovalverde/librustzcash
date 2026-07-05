@@ -198,6 +198,11 @@ workspace.
   `wallet::NoteId::{new, protocol}`, `data_api::AccountMeta::note_count`,
   `fees::ChangeValue::shielded`, the `fees` change-strategy constructors, and the
   `scanning::ScanError` pool fields.
+- `zcash_client_backend::data_api::AccountMeta` now tracks Ironwood notes:
+  `AccountMeta::new` takes an additional `ironwood` argument, an `ironwood`
+  accessor has been added, and `total_note_count`, `total_value`, and
+  `note_count(ShieldedPool::Ironwood)` now include Ironwood notes, so
+  change-output splitting accounts for the account's Ironwood holdings.
 - Fee and change calculation now derive the Orchard bundle version — and hence
   the Orchard action-count policy — from the proposal's target height, instead
   of unconditionally using the legacy (pre-NU6.3) policy. Proposals targeting
