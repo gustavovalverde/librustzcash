@@ -577,6 +577,7 @@ fn pool_type<T>(pool_id: i32) -> Result<PoolType, ProposalDecodingError<T>> {
         Ok(proposal::ValuePool::Transparent) => Ok(PoolType::TRANSPARENT),
         Ok(proposal::ValuePool::Sapling) => Ok(PoolType::SAPLING),
         Ok(proposal::ValuePool::Orchard) => Ok(PoolType::ORCHARD),
+        Ok(proposal::ValuePool::Ironwood) => Ok(PoolType::IRONWOOD),
         _ => Err(ProposalDecodingError::ValuePoolNotSupported(pool_id)),
     }
 }
@@ -611,11 +612,7 @@ impl From<ShieldedPool> for proposal::ValuePool {
         match value {
             ShieldedPool::Sapling => proposal::ValuePool::Sapling,
             ShieldedPool::Orchard => proposal::ValuePool::Orchard,
-            ShieldedPool::Ironwood => {
-                todo!(
-                    "Ironwood value pool is not yet representable in the protobuf proposal format"
-                )
-            }
+            ShieldedPool::Ironwood => proposal::ValuePool::Ironwood,
         }
     }
 }

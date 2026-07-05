@@ -1172,6 +1172,16 @@ pub(crate) mod tests {
             )
             .unwrap();
 
+        // A wallet application serializes the proposal to protobuf (e.g. to hand it across
+        // FFI for review/signing) before creating the transaction. A proposal that spends
+        // Ironwood notes must survive that round-trip.
+        let proposal_proto =
+            zcash_client_backend::proto::proposal::Proposal::from_standard_proposal(&proposal);
+        let roundtripped = proposal_proto
+            .try_into_standard_proposal(st.wallet())
+            .expect("Ironwood proposal round-trips through protobuf");
+        assert_eq!(roundtripped, proposal);
+
         let fee = proposal.steps().last().balance().fee_required();
         assert!(fee.into_u64() > 0, "the transaction must pay a fee");
 
