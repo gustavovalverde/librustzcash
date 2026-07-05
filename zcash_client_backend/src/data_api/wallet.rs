@@ -1771,7 +1771,12 @@ where
                     add_transparent_output(&mut builder, &mut transparent_output_meta, to)?;
                 }
                 PoolType::Shielded(ShieldedPool::Ironwood) => {
-                    todo!("Ironwood pool support is not yet implemented")
+                    // Payments to a unified address are never assigned the Ironwood output
+                    // pool: Ironwood notes are delivered to the Orchard receiver (the Orchard
+                    // arm above routes them into the Ironwood bundle when Ironwood is active),
+                    // so step construction only ever assigns Sapling, Orchard, or Transparent
+                    // here. Reaching this arm means the proposal is internally inconsistent.
+                    return Err(Error::ProposalNotSupported);
                 }
             },
             Address::Sapling(to) => {
