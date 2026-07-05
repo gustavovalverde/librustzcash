@@ -1071,7 +1071,7 @@ impl<DbT: InputSource> InputSelector for GreedyInputSelector<DbT> {
                             #[cfg(feature = "orchard")]
                             ironwood: use_ironwood,
                         }))
-                        .map(|notes| ShieldedInputs::from_parts(notes));
+                        .map(ShieldedInputs::from_parts);
 
                     return build_proposal(
                         change_strategy.fee_rule(),
@@ -1508,7 +1508,7 @@ where
         #[cfg(feature = "orchard")]
         ironwood: use_ironwood,
     }))
-    .map(|notes| ShieldedInputs::from_parts(notes));
+    .map(ShieldedInputs::from_parts);
 
     build_proposal(
         fee_rule,

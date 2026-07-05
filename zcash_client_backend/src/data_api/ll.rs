@@ -791,7 +791,7 @@ impl<AccountId: Copy> ReceivedShieldedOutput for WalletOrchardOutput<AccountId> 
     fn to_wallet_note(&self) -> crate::wallet::Note {
         let (note, pool) = self.note();
         crate::wallet::Note::Orchard {
-            note: note.clone(),
+            note: *note,
             pool: *pool,
         }
     }
@@ -839,7 +839,7 @@ impl<AccountId: Copy> ReceivedShieldedOutput
     fn to_wallet_note(&self) -> crate::wallet::Note {
         let (note, pool) = self.note();
         crate::wallet::Note::Orchard {
-            note: note.clone(),
+            note: *note,
             pool: *pool,
         }
     }
