@@ -72,6 +72,9 @@ workspace.
   the Ironwood note commitment tree (equal to the Orchard shard height).
 - `zcash_client_backend::data_api::NoteCommitmentTree`
 - `zcash_client_backend::data_api::SentTransactionOutput::note_commitment_tree`
+- `zcash_client_backend::proto::proposal::ValuePool::Ironwood`, so that a proposal
+  that spends Ironwood notes can be serialized to and parsed back from the
+  protobuf proposal format.
 - `zcash_client_backend::fees::orchard::BundleView::bundle_version`, replacing
   the `bundle_type` accessor; it returns the `orchard::bundle::BundleVersion`
   used to compute the Orchard action count.
@@ -244,6 +247,14 @@ workspace.
   `zcash_protocol::ShieldedPool` argument, a `value_pool` accessor has been added,
   and the `DecryptedOrchardOutput` associated type now carries the Orchard
   `ValuePool` so Ironwood outputs are distinguished from Orchard.
+- `zcash_client_backend::decrypt_transaction` now decrypts the transaction's
+  Ironwood bundle under the Ironwood note-encryption domain, so
+  `decrypt_and_store_transaction` detects and stores received Ironwood notes
+  (previously the Ironwood bundle was decrypted under the Orchard domain and no
+  Ironwood note was found). `zcash_client_backend::data_api::DecryptedTransaction`
+  tracks these separately: `DecryptedTransaction::new` takes an additional
+  `ironwood_outputs` argument and an `ironwood_outputs` accessor has been added,
+  both behind the `orchard` feature flag.
 - `zcash_client_backend::proposal`:
   - `Proposal::single_step` and `Step::from_parts` now take transparent inputs
     as `Vec<WalletTransparentOutput<()>>` (explicitly with no account ID), and
