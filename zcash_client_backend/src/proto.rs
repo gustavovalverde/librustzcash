@@ -632,9 +632,7 @@ impl proposal::Proposal {
             .map(|step| {
                 let transaction_request = step.transaction_request().to_uri();
 
-                let anchor_height = step
-                    .shielded_inputs()
-                    .map_or_else(|| 0, |i| u32::from(i.anchor_height()));
+                let anchor_height = u32::from(step.anchor_height());
 
                 let inputs = step
                     .transparent_inputs()
@@ -871,8 +869,8 @@ impl proposal::Proposal {
                         }
                     }
 
-                    let shielded_inputs = NonEmpty::from_vec(received_notes)
-                        .map(|notes| ShieldedInputs::from_parts(step.anchor_height.into(), notes));
+                    let shielded_inputs =
+                        NonEmpty::from_vec(received_notes).map(ShieldedInputs::from_parts);
 
                     let proto_balance = step
                         .balance
@@ -928,6 +926,7 @@ impl proposal::Proposal {
                         payment_pools,
                         transparent_inputs,
                         shielded_inputs,
+                        step.anchor_height.into(),
                         prior_step_inputs,
                         balance,
                         step.is_shielding,

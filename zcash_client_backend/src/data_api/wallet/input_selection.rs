@@ -262,6 +262,7 @@ pub trait ShieldingSelector {
         source_addrs: &[TransparentAddress],
         to_account: <Self::InputSource as InputSource>::AccountId,
         target_height: TargetHeight,
+        anchor_height: BlockHeight,
         confirmations_policy: ConfirmationsPolicy,
         output_filter: CoinbaseFilter,
     ) -> Result<
@@ -327,6 +328,7 @@ pub trait ShieldingSelector {
         memo: Option<MemoBytes>,
         limit: Option<usize>,
         target_height: TargetHeight,
+        anchor_height: BlockHeight,
     ) -> Result<
         Proposal<FeeRuleT, Infallible>,
         InputSelectorError<
@@ -1069,12 +1071,13 @@ impl<DbT: InputSource> InputSelector for GreedyInputSelector<DbT> {
                             #[cfg(feature = "orchard")]
                             ironwood: use_ironwood,
                         }))
-                        .map(|notes| ShieldedInputs::from_parts(anchor_height, notes));
+                        .map(|notes| ShieldedInputs::from_parts(notes));
 
                     return build_proposal(
                         change_strategy.fee_rule(),
                         tr0_balance,
                         target_height,
+                        anchor_height,
                         shielded_inputs,
                         transparent_inputs,
                         transaction_request,
@@ -1505,12 +1508,13 @@ where
         #[cfg(feature = "orchard")]
         ironwood: use_ironwood,
     }))
-    .map(|notes| ShieldedInputs::from_parts(anchor_height, notes));
+    .map(|notes| ShieldedInputs::from_parts(notes));
 
     build_proposal(
         fee_rule,
         tr0_balance,
         target_height,
+        anchor_height,
         shielded_inputs,
         vec![],
         transaction_request,
@@ -1542,6 +1546,7 @@ fn build_proposal<FeeRuleT: FeeRule + Clone, NoteRef>(
     fee_rule: &FeeRuleT,
     tr0_balance: TransactionBalance,
     target_height: TargetHeight,
+    anchor_height: BlockHeight,
     shielded_inputs: Option<ShieldedInputs<NoteRef>>,
     transparent_inputs: Vec<WalletTransparentOutput<()>>,
     transaction_request: TransactionRequest,
@@ -1593,6 +1598,7 @@ fn build_proposal<FeeRuleT: FeeRule + Clone, NoteRef>(
             payment_pools,
             transparent_inputs,
             shielded_inputs,
+            anchor_height,
             vec![],
             tr0_balance,
             false,
@@ -1606,6 +1612,7 @@ fn build_proposal<FeeRuleT: FeeRule + Clone, NoteRef>(
             ephemeral_step.tr1_payment_pools,
             vec![],
             None,
+            anchor_height,
             vec![ephemeral_stepoutput],
             tr1_balance,
             false,
@@ -1623,6 +1630,7 @@ fn build_proposal<FeeRuleT: FeeRule + Clone, NoteRef>(
         payment_pools,
         transparent_inputs,
         shielded_inputs,
+        anchor_height,
         tr0_balance,
         fee_rule.clone(),
         target_height,
@@ -1645,6 +1653,7 @@ impl<DbT: InputSource> ShieldingSelector for GreedyInputSelector<DbT> {
         source_addrs: &[TransparentAddress],
         to_account: <Self::InputSource as InputSource>::AccountId,
         target_height: TargetHeight,
+        anchor_height: BlockHeight,
         confirmations_policy: ConfirmationsPolicy,
         output_filter: CoinbaseFilter,
     ) -> Result<
@@ -1682,6 +1691,7 @@ impl<DbT: InputSource> ShieldingSelector for GreedyInputSelector<DbT> {
                 BTreeMap::new(),
                 transparent_inputs,
                 None,
+                anchor_height,
                 balance,
                 (*change_strategy.fee_rule()).clone(),
                 target_height,
@@ -1708,6 +1718,7 @@ impl<DbT: InputSource> ShieldingSelector for GreedyInputSelector<DbT> {
         memo: Option<MemoBytes>,
         limit: Option<usize>,
         target_height: TargetHeight,
+        anchor_height: BlockHeight,
     ) -> Result<
         Proposal<FeeRuleT, Infallible>,
         InputSelectorError<<DbT as InputSource>::Error, Self::Error, FeeRuleT::Error, Infallible>,
@@ -1836,6 +1847,7 @@ impl<DbT: InputSource> ShieldingSelector for GreedyInputSelector<DbT> {
             payment_pools,
             transparent_inputs,
             None,
+            anchor_height,
             final_balance,
             fee_rule.clone(),
             target_height,
