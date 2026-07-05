@@ -224,9 +224,11 @@ workspace.
   routes Orchard-recipient spends and outputs through the Ironwood transaction
   builder when Ironwood is active, unless an explicit legacy V5 transaction is
   requested.
-- `zcash_client_backend::data_api::wallet::create_pczt_from_proposal` continues
-  to use legacy Orchard routing for Orchard-recipient proposals until PCZT has
-  Ironwood role support.
+- `zcash_client_backend::data_api::wallet::create_pczt_from_proposal` now
+  builds a V6 PCZT and threads Ironwood spends and outputs through
+  `Updater::update_ironwood_with` when the proposal routes value through the
+  Ironwood bundle, instead of rejecting the proposal with
+  `Error::ProposalNotSupported`.
 - Renamed `zcash_client_backend::data_api::TransparentOutputFilter` to
   `CoinbaseFilter`, and its `All` variant to `AllTransparentOutputs`.
 - During scanning, transparent `OP_RETURN` (nulldata) outputs are now recognized as
