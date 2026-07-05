@@ -2667,15 +2667,21 @@ pub struct DecryptedTransaction<'a, Tx: DecryptableTransaction<AccountId>, Accou
     sapling_outputs: Vec<Tx::DecryptedSaplingOutput>,
     #[cfg(feature = "orchard")]
     orchard_outputs: Vec<Tx::DecryptedOrchardOutput>,
+    #[cfg(feature = "orchard")]
+    ironwood_outputs: Vec<Tx::DecryptedOrchardOutput>,
 }
 
 impl<'a, Tx: DecryptableTransaction<AccountId>, AccountId> DecryptedTransaction<'a, Tx, AccountId> {
     /// Constructs a new [`DecryptedTransaction`] from its constituent parts.
+    ///
+    /// Ironwood outputs are Orchard-shaped but belong to a distinct pool, and are passed and
+    /// tracked separately from Orchard outputs.
     pub fn new(
         mined_height: Option<BlockHeight>,
         tx: &'a Tx,
         sapling_outputs: Vec<Tx::DecryptedSaplingOutput>,
         #[cfg(feature = "orchard")] orchard_outputs: Vec<Tx::DecryptedOrchardOutput>,
+        #[cfg(feature = "orchard")] ironwood_outputs: Vec<Tx::DecryptedOrchardOutput>,
     ) -> Self {
         Self {
             mined_height,
@@ -2683,6 +2689,8 @@ impl<'a, Tx: DecryptableTransaction<AccountId>, AccountId> DecryptedTransaction<
             sapling_outputs,
             #[cfg(feature = "orchard")]
             orchard_outputs,
+            #[cfg(feature = "orchard")]
+            ironwood_outputs,
         }
     }
 
@@ -2704,11 +2712,19 @@ impl<'a, Tx: DecryptableTransaction<AccountId>, AccountId> DecryptedTransaction<
         &self.orchard_outputs
     }
 
+    /// Returns the Ironwood outputs that were decrypted from the transaction.
+    ///
+    /// Ironwood outputs are Orchard-shaped but belong to a pool distinct from Orchard.
+    #[cfg(feature = "orchard")]
+    pub fn ironwood_outputs(&self) -> &[Tx::DecryptedOrchardOutput] {
+        &self.ironwood_outputs
+    }
+
     /// Returns whether the transaction has decrypted outputs
     pub fn has_decrypted_outputs(&self) -> bool {
         let has_sapling = !self.sapling_outputs.is_empty();
         #[cfg(feature = "orchard")]
-        let has_orchard = !self.orchard_outputs.is_empty();
+        let has_orchard = !self.orchard_outputs.is_empty() || !self.ironwood_outputs.is_empty();
         #[cfg(not(feature = "orchard"))]
         let has_orchard = false;
 

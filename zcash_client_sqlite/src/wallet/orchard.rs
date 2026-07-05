@@ -1236,6 +1236,132 @@ pub(crate) mod tests {
         );
     }
 
+    /// `decrypt_transaction` must decrypt a transaction's Ironwood bundle under the Ironwood
+    /// note-encryption domain, detecting a wallet-owned Ironwood output as an Ironwood note (and
+    /// not as Orchard). Decrypting under the Orchard domain would silently detect nothing.
+    #[test]
+    #[cfg(feature = "orchard")]
+    fn decrypt_transaction_detects_ironwood_output() {
+        use std::collections::HashMap;
+        use std::convert::Infallible;
+
+        use zcash_client_backend::{
+            data_api::{
+                Account, WalletRead,
+                testing::{
+                    AddressType, IronwoodFvk, TestBuilder, orchard::OrchardPoolTester,
+                    pool::ShieldedPoolTester,
+                },
+                wallet::ConfirmationsPolicy,
+                wallet::input_selection::GreedyInputSelector,
+            },
+            decrypt_transaction,
+            fees::{DustOutputPolicy, StandardFeeRule, standard},
+            wallet::OvkPolicy,
+        };
+        use zcash_keys::address::Address;
+        use zcash_primitives::block::BlockHash;
+        use zcash_protocol::{
+            ShieldedPool, consensus::BlockHeight, local_consensus::LocalNetwork, value::Zatoshis,
+        };
+        use zip321::{Payment, TransactionRequest};
+
+        use crate::testing::{BlockCache, db::TestDbFactory};
+
+        let activation = BlockHeight::from_u32(100_000);
+        let network = LocalNetwork {
+            nu6: Some(activation),
+            nu6_1: Some(activation),
+            nu6_2: Some(activation),
+            nu6_3: Some(activation),
+            ..TestBuilder::<(), ()>::DEFAULT_NETWORK
+        };
+
+        let mut st = TestBuilder::new()
+            .with_network(network)
+            .with_data_store_factory(TestDbFactory::default())
+            .with_block_cache(BlockCache::new())
+            .with_account_from_sapling_activation(BlockHash([0; 32]))
+            .build();
+
+        let account = st.test_account().cloned().unwrap();
+        let account_id = account.id();
+        let account_fvk = OrchardPoolTester::test_account_fvk(&st);
+
+        // Receive an Ironwood note to fund the transfer.
+        let received = IronwoodFvk(account_fvk.clone());
+        let note_value = Zatoshis::const_from_u64(100_000);
+        let (h, _, _) = st.generate_next_block(&received, AddressType::DefaultExternal, note_value);
+        st.scan_cached_blocks(h, 1);
+        for _ in 0..5 {
+            let (h, _) = st.generate_empty_block();
+            st.scan_cached_blocks(h, 1);
+        }
+
+        // Pay the account's own Orchard address; while Ironwood is active this produces a
+        // wallet-owned Ironwood output.
+        let to: Address = OrchardPoolTester::fvk_default_address(&account_fvk);
+        let payment_value = Zatoshis::const_from_u64(10_000);
+        let request = TransactionRequest::new(vec![Payment::without_memo(
+            to.to_zcash_address(st.network()),
+            payment_value,
+        )])
+        .unwrap();
+
+        let change_strategy = standard::SingleOutputChangeStrategy::new(
+            StandardFeeRule::Zip317,
+            None,
+            ShieldedPool::Orchard,
+            DustOutputPolicy::default(),
+        );
+        let input_selector = GreedyInputSelector::new();
+        let proposal = st
+            .propose_transfer(
+                account_id,
+                &input_selector,
+                &change_strategy,
+                request,
+                ConfirmationsPolicy::MIN,
+            )
+            .unwrap();
+        let created = st
+            .create_proposed_transactions::<Infallible, _, Infallible, _>(
+                account.usk(),
+                OvkPolicy::Sender,
+                &proposal,
+            )
+            .unwrap();
+        let tx = st
+            .wallet()
+            .get_transaction(created[0])
+            .unwrap()
+            .expect("The sent transaction was stored.");
+
+        // Decrypt the full transaction with the account's viewing keys.
+        let mut ufvks = HashMap::new();
+        ufvks.insert(account_id, account.ufvk().unwrap().clone());
+        let d_tx = decrypt_transaction(st.network(), None, None, &tx, &ufvks);
+
+        // The self-payment is detected as an Ironwood output (not Orchard).
+        let ironwood: Vec<_> = d_tx
+            .ironwood_outputs()
+            .iter()
+            .filter(|o| o.value_pool() == ShieldedPool::Ironwood)
+            .collect();
+        assert_eq!(
+            ironwood.len(),
+            1,
+            "the wallet-owned Ironwood output must be detected under the Ironwood domain"
+        );
+        assert_eq!(ironwood[0].note().0.value().inner(), payment_value.into_u64());
+        assert!(
+            d_tx.orchard_outputs()
+                .iter()
+                .all(|o| o.value_pool() == ShieldedPool::Orchard),
+            "Ironwood notes must not be misfiled as Orchard outputs"
+        );
+    }
+
     #[test]
     #[cfg(feature = "orchard")]
     fn get_unspent_orchard_notes_at_historical_height_boundary_heights() {
