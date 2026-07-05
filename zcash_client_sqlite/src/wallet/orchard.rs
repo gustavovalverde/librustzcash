@@ -1172,6 +1172,17 @@ pub(crate) mod tests {
             )
             .unwrap();
 
+        // Change from spending Ironwood notes stays in the Ironwood pool rather than crossing
+        // the turnstile back into Orchard.
+        let change = proposal.steps().last().balance().proposed_change();
+        assert!(!change.is_empty(), "the spend must produce change");
+        assert!(
+            change
+                .iter()
+                .all(|c| c.output_pool() == zcash_protocol::PoolType::IRONWOOD),
+            "change from an Ironwood spend must stay in the Ironwood pool"
+        );
+
         // A wallet application serializes the proposal to protobuf (e.g. to hand it across
         // FFI for review/signing) before creating the transaction. A proposal that spends
         // Ironwood notes must survive that round-trip.

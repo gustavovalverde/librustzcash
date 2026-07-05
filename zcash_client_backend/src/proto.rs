@@ -896,6 +896,10 @@ impl proposal::Proposal {
                                     (PoolType::Shielded(ShieldedPool::Orchard), false) => {
                                         Ok(ChangeValue::orchard(value, memo))
                                     }
+                                    #[cfg(feature = "orchard")]
+                                    (PoolType::Shielded(ShieldedPool::Ironwood), false) => {
+                                        Ok(ChangeValue::shielded(ShieldedPool::Ironwood, value, memo))
+                                    }
                                     (PoolType::Transparent, _) if memo.is_some() => {
                                         Err(ProposalDecodingError::TransparentMemo)
                                     }

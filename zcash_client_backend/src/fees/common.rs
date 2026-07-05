@@ -158,6 +158,11 @@ pub(crate) fn select_change_pool(
     if _net_flows.orchard_in.is_positive() || _net_flows.orchard_out.is_positive() {
         // Send change to Orchard if we're spending any Orchard inputs or creating any Orchard outputs.
         ShieldedPool::Orchard
+    } else if _net_flows.ironwood_in.is_positive() || _net_flows.ironwood_out.is_positive() {
+        // Send change to Ironwood if we're spending Ironwood inputs or creating Ironwood outputs
+        // (and no Orchard flows), so that change from an Ironwood spend stays in the Ironwood pool
+        // rather than crossing the turnstile back into Orchard.
+        ShieldedPool::Ironwood
     } else if _net_flows.sapling_in.is_positive() || _net_flows.sapling_out.is_positive() {
         // Otherwise, send change to Sapling if we're spending any Sapling inputs or creating any
         // Sapling outputs, so that we avoid pool-crossing.
@@ -176,6 +181,7 @@ pub(crate) struct OutputManifest {
     transparent: usize,
     sapling: usize,
     orchard: usize,
+    ironwood: usize,
 }
 
 impl OutputManifest {
@@ -183,6 +189,7 @@ impl OutputManifest {
         transparent: 0,
         sapling: 0,
         orchard: 0,
+        ironwood: 0,
     };
 
     pub(crate) fn sapling(&self) -> usize {
@@ -193,8 +200,12 @@ impl OutputManifest {
         self.orchard
     }
 
+    pub(crate) fn ironwood(&self) -> usize {
+        self.ironwood
+    }
+
     pub(crate) fn total_shielded(&self) -> usize {
-        self.sapling + self.orchard
+        self.sapling + self.orchard + self.ironwood
     }
 }
 
@@ -275,6 +286,7 @@ where
     )?;
 
     let change_pool = select_change_pool(&net_flows, cfg.fallback_change_pool);
+
     let target_change_count = wallet_meta.map_or(1, |m| {
         usize::from(cfg.split_policy.target_output_count)
             // If we cannot determine a total note count, fall back to a single output
@@ -289,6 +301,11 @@ where
             0
         },
         orchard: if change_pool == ShieldedPool::Orchard {
+            target_change_count
+        } else {
+            0
+        },
+        ironwood: if change_pool == ShieldedPool::Ironwood {
             target_change_count
         } else {
             0
@@ -490,11 +507,14 @@ where
                         } else {
                             target_change_counts.orchard()
                         })?,
-                        ironwood_action_count(if route_change_to_ironwood {
-                            target_change_counts.orchard()
-                        } else {
-                            0
-                        })?,
+                        ironwood_action_count(
+                            target_change_counts.ironwood()
+                                + if route_change_to_ironwood {
+                                    target_change_counts.orchard()
+                                } else {
+                                    0
+                                },
+                        )?,
                     )
                     .map_err(|fee_error| ChangeError::StrategyError(E::from(fee_error)))?,
             );
@@ -537,7 +557,9 @@ where
                             },
                         )?,
                         ironwood_action_count(
-                            if change_pool == ShieldedPool::Orchard && route_change_to_ironwood {
+                            if (change_pool == ShieldedPool::Orchard && route_change_to_ironwood)
+                                || change_pool == ShieldedPool::Ironwood
+                            {
                                 split_count
                             } else {
                                 0
@@ -830,6 +852,9 @@ pub(crate) fn check_for_uneconomic_inputs<NoteRefT: Clone, E>(
             transparent: t_allowed + t_extra,
             sapling: s_allowed + s_extra,
             orchard: o_allowed + o_extra,
+            // Ironwood inputs are not passed to this economic check, so no Ironwood dust
+            // allocation is modelled here.
+            ironwood: 0,
         })
     };
 
@@ -843,6 +868,7 @@ pub(crate) fn check_for_uneconomic_inputs<NoteRefT: Clone, E>(
             transparent: min(l.transparent, r.transparent),
             sapling: min(l.sapling, r.sapling),
             orchard: min(l.orchard, r.orchard),
+            ironwood: min(l.ironwood, r.ironwood),
         })
         .expect("possible_change is nonempty");
 
@@ -861,5 +887,54 @@ pub(crate) fn check_for_uneconomic_inputs<NoteRefT: Clone, E>(
             #[cfg(feature = "orchard")]
             orchard: o_dust,
         })
+    }
+}
+
+#[cfg(all(test, feature = "orchard"))]
+mod tests {
+    use super::{NetFlows, select_change_pool};
+    use zcash_protocol::{ShieldedPool, value::Zatoshis};
+
+    fn flows(orchard_in: u64, ironwood_in: u64, sapling_in: u64) -> NetFlows {
+        NetFlows {
+            t_in: Zatoshis::ZERO,
+            t_out: Zatoshis::ZERO,
+            sapling_in: Zatoshis::const_from_u64(sapling_in),
+            sapling_out: Zatoshis::ZERO,
+            orchard_in: Zatoshis::const_from_u64(orchard_in),
+            orchard_out: Zatoshis::ZERO,
+            ironwood_in: Zatoshis::const_from_u64(ironwood_in),
+            ironwood_out: Zatoshis::ZERO,
+        }
+    }
+
+    #[test]
+    fn select_change_pool_routes_ironwood_spend_to_ironwood() {
+        // Spending Ironwood funds (no Orchard or Sapling flows) sends change to Ironwood,
+        // keeping it in the pool being spent rather than crossing back into Orchard.
+        assert_eq!(
+            select_change_pool(&flows(0, 10_000, 0), ShieldedPool::Sapling),
+            ShieldedPool::Ironwood
+        );
+
+        // Spending Orchard funds keeps change in Orchard even when Ironwood funds are also
+        // spent, so that Ironwood-routed change cannot reveal the spent Orchard notes' balances.
+        assert_eq!(
+            select_change_pool(&flows(10_000, 10_000, 0), ShieldedPool::Sapling),
+            ShieldedPool::Orchard
+        );
+
+        // A combined Sapling + Ironwood spend routes change to Ironwood (Ironwood is preferred
+        // over Sapling).
+        assert_eq!(
+            select_change_pool(&flows(0, 10_000, 10_000), ShieldedPool::Sapling),
+            ShieldedPool::Ironwood
+        );
+
+        // A Sapling-only spend keeps change in Sapling.
+        assert_eq!(
+            select_change_pool(&flows(0, 0, 10_000), ShieldedPool::Orchard),
+            ShieldedPool::Sapling
+        );
     }
 }
