@@ -18,8 +18,9 @@ workspace.
   Creator, `Creator::build_from_parts`, the serialization formats, and the IO
   Finalizer, so that copies of a PCZT that take different serialization paths
   continue to merge successfully:
-  - `Creator::build_from_parts` now uses an all-zeroes anchor (rather than the
-    empty-tree root) for absent Sapling and Orchard bundles.
+  - `Creator::build_from_parts` now leaves the anchor absent (rather than
+    using the empty-tree root or an all-zeroes sentinel) for a Sapling,
+    Orchard, or Ironwood bundle that the built transaction does not use.
   - The Creator now initializes empty bundle value sums as non-negative zero.
   - The IO Finalizer no longer sets `bsk` on an empty Orchard-protocol bundle.
   - An Orchard-protocol bundle whose fields differ from the canonical empty
@@ -71,6 +72,27 @@ workspace.
   add, remove, or reorder actions; doing so now returns the new
   `pczt::roles::low_level_signer::OrchardParseError::SigningClosureModifiedActions`
   error and leaves the PCZT unmodified.
+- The `anchor` field of `pczt::sapling::Bundle` and `pczt::orchard::Bundle`
+  (shared by the Orchard and Ironwood bundles) is now `Option<[u8; 32]>`
+  rather than `[u8; 32]`, matching the optional anchors of the PCZT version 2
+  encoding ([ZIP 374](https://zips.z.cash/zip-0374#anchors-and-pre-authorization)).
+  A v5 transaction's shielded bundle anchors are always set and immutable; a
+  v6 transaction's anchors may be absent until the Prover runs, and may be set
+  or replaced by an Updater at any earlier point.
+  - `pczt::roles::creator::Creator::new` now takes `sapling_anchor` and
+    `orchard_anchor` as `Option<[u8; 32]>`. Passing `None` for a v5
+    transaction returns the new `pczt::roles::creator::Error::AnchorRequiredForV5`.
+  - `pczt::roles::creator::Creator::with_ironwood_anchor` leaves the Ironwood
+    anchor unset if not called, rather than defaulting it to all-zeroes.
+  - The v1 serialization format requires every non-empty shielded bundle's
+    anchor to be set, returning the new `pczt::EncodingError::MissingAnchor`
+    otherwise; a v1-encoded anchor always parses back to `Some`.
+  - The Prover now verifies, before creating a Sapling, Orchard, or Ironwood
+    proof, that every non-zero-valued spend's witness roots to the bundle's
+    anchor, and requires the anchor to be set for a non-empty bundle.
+  - The Combiner merges anchors using the existing optional-field convention:
+    an absent anchor merges with a set one, and two different set anchors
+    fail the merge.
 
 ### Added
 - `pczt::roles::creator::Error`, the error type returned by the now-fallible
@@ -101,6 +123,22 @@ workspace.
 - `pczt::roles::low_level_signer::OrchardParseError`
 - `UnsupportedConsensusBranchId` variants of `pczt::roles::updater::OrchardError`,
   `pczt::roles::verifier::OrchardError`, and `pczt::roles::prover::OrchardError`.
+- `pczt::EncodingError::MissingAnchor`
+- `pczt::sapling::v1`, a module providing the version 1 Sapling bundle
+  serialization format.
+- `pczt::sapling::ParseError`, `pczt::sapling::AnchorConsistencyError`
+- `pczt::orchard::ParseError`, `pczt::orchard::AnchorConsistencyError`
+- `pczt::roles::creator::Error::AnchorRequiredForV5`
+- `pczt::roles::updater::Updater::{set_sapling_anchor, set_orchard_anchor,
+  set_ironwood_anchor}`, for setting or replacing a v6 transaction's shielded
+  bundle anchors.
+- `pczt::roles::updater::SaplingError::{AnchorImmutableForV5,
+  InconsistentWitness, InvalidAnchor}`
+- `pczt::roles::updater::OrchardError::{AnchorImmutableForV5,
+  InconsistentWitness, InvalidAnchor}`
+- `pczt::roles::prover::SaplingError::InconsistentWitness`
+- `pczt::roles::prover::OrchardError::InconsistentWitness`
+- `pczt::roles::prover::IronwoodError::InconsistentWitness`
 
 ## [0.7.0] - 2026-06-02
 
