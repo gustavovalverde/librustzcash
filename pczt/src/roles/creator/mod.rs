@@ -29,6 +29,10 @@ const INITIAL_TX_MODIFIABLE: u8 = FLAG_TRANSPARENT_INPUTS_MODIFIABLE
 /// Errors that can occur when creating a PCZT.
 #[derive(Debug)]
 pub enum Error {
+    /// A v5 transaction's shielded bundle anchors MUST be set by the Creator (they are
+    /// transaction effecting data, and cannot subsequently change); see
+    /// [ZIP 374: Anchors and pre-authorization](https://zips.z.cash/zip-0374#anchors-and-pre-authorization).
+    AnchorRequiredForV5,
     /// The transaction version implied by the consensus branch ID does not carry an
     /// Ironwood bundle.
     IronwoodNotSupported,
@@ -66,9 +70,9 @@ pub struct Creator {
     coin_type: u32,
     orchard_flags: u8,
     ironwood_flags: u8,
-    sapling_anchor: [u8; 32],
-    orchard_anchor: [u8; 32],
-    ironwood_anchor: [u8; 32],
+    sapling_anchor: Option<[u8; 32]>,
+    orchard_anchor: Option<[u8; 32]>,
+    ironwood_anchor: Option<[u8; 32]>,
 }
 
 impl Creator {
@@ -77,17 +81,23 @@ impl Creator {
     /// The transaction version is implied by the consensus branch ID: the v6
     /// transaction format from NU6.3 onward, and the v5 format for earlier upgrades.
     ///
+    /// For a v5 transaction, `sapling_anchor` and `orchard_anchor` MUST be provided (the
+    /// v5 signature hash commits to them, so they can never subsequently change). For a
+    /// v6 transaction, they MAY be left unset (`None`) and provided later by an Updater;
+    /// see [ZIP 374: Anchors and pre-authorization](https://zips.z.cash/zip-0374#anchors-and-pre-authorization).
+    ///
     /// # Errors
     ///
     /// Returns [`Error::UnknownConsensusBranchId`] if `consensus_branch_id` is not
-    /// a recognized branch ID, or [`Error::UnsupportedConsensusBranchId`] if it
-    /// predates the v5 transaction format.
+    /// a recognized branch ID, [`Error::UnsupportedConsensusBranchId`] if it
+    /// predates the v5 transaction format, or [`Error::AnchorRequiredForV5`] if the
+    /// branch ID implies the v5 transaction format and either anchor is `None`.
     pub fn new(
         consensus_branch_id: u32,
         expiry_height: u32,
         coin_type: u32,
-        sapling_anchor: [u8; 32],
-        orchard_anchor: [u8; 32],
+        sapling_anchor: Option<[u8; 32]>,
+        orchard_anchor: Option<[u8; 32]>,
     ) -> Result<Self, Error> {
         let branch_id = consensus_branch_id_for_pczt(consensus_branch_id)?;
 
@@ -109,6 +119,10 @@ impl Creator {
             BranchId::Nu7 => (V6_TX_VERSION, V6_VERSION_GROUP_ID),
         };
 
+        if tx_version == V5_TX_VERSION && (sapling_anchor.is_none() || orchard_anchor.is_none()) {
+            return Err(Error::AnchorRequiredForV5);
+        }
+
         Ok(Self {
             tx_version,
             version_group_id,
@@ -120,7 +134,7 @@ impl Creator {
             ironwood_flags: crate::orchard::IRONWOOD_SPENDS_OUTPUTS_AND_CROSS_ADDRESS_ENABLED,
             sapling_anchor,
             orchard_anchor,
-            ironwood_anchor: [0; 32],
+            ironwood_anchor: None,
         })
     }
 
@@ -167,6 +181,11 @@ impl Creator {
 
     /// Sets the Ironwood anchor for the PCZT.
     ///
+    /// The Ironwood bundle only exists for a v6 transaction, so (unlike the Sapling and
+    /// Orchard anchors) it has no v5 counterpart requiring it to be set at creation; if
+    /// this method is not called, the Ironwood anchor is left unset and MAY be provided
+    /// later by an Updater.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::IronwoodNotSupported`] if the transaction version implied by
@@ -176,7 +195,7 @@ impl Creator {
         if self.tx_version != V6_TX_VERSION {
             return Err(Error::IronwoodNotSupported);
         }
-        self.ironwood_anchor = ironwood_anchor;
+        self.ironwood_anchor = Some(ironwood_anchor);
         Ok(self)
     }
 
@@ -324,15 +343,27 @@ mod tests {
 
     #[test]
     fn tx_version_follows_branch() {
-        let pczt = Creator::new(BranchId::Nu6_2.into(), 10_000_000, 133, [0; 32], [0; 32])
-            .unwrap()
-            .build();
+        let pczt = Creator::new(
+            BranchId::Nu6_2.into(),
+            10_000_000,
+            133,
+            Some([0; 32]),
+            Some([0; 32]),
+        )
+        .unwrap()
+        .build();
         assert_eq!(pczt.global.tx_version, V5_TX_VERSION);
         assert_eq!(pczt.global.version_group_id, V5_VERSION_GROUP_ID);
 
-        let pczt = Creator::new(BranchId::Nu6_3.into(), 10_000_000, 133, [0; 32], [0; 32])
-            .unwrap()
-            .build();
+        let pczt = Creator::new(
+            BranchId::Nu6_3.into(),
+            10_000_000,
+            133,
+            Some([0; 32]),
+            Some([0; 32]),
+        )
+        .unwrap()
+        .build();
         assert_eq!(pczt.global.tx_version, V6_TX_VERSION);
         assert_eq!(pczt.global.version_group_id, V6_VERSION_GROUP_ID);
     }
@@ -340,17 +371,29 @@ mod tests {
     #[test]
     fn ironwood_anchor_requires_v6() {
         assert!(matches!(
-            Creator::new(BranchId::Nu6_2.into(), 10_000_000, 133, [0; 32], [0; 32])
-                .unwrap()
-                .with_ironwood_anchor([1; 32]),
+            Creator::new(
+                BranchId::Nu6_2.into(),
+                10_000_000,
+                133,
+                Some([0; 32]),
+                Some([0; 32])
+            )
+            .unwrap()
+            .with_ironwood_anchor([1; 32]),
             Err(Error::IronwoodNotSupported)
         ));
 
-        let pczt = Creator::new(BranchId::Nu6_3.into(), 10_000_000, 133, [0; 32], [0; 32])
-            .unwrap()
-            .with_ironwood_anchor([1; 32])
-            .unwrap()
-            .build();
-        assert_eq!(pczt.ironwood.anchor, [1; 32]);
+        let pczt = Creator::new(
+            BranchId::Nu6_3.into(),
+            10_000_000,
+            133,
+            Some([0; 32]),
+            Some([0; 32]),
+        )
+        .unwrap()
+        .with_ironwood_anchor([1; 32])
+        .unwrap()
+        .build();
+        assert_eq!(pczt.ironwood.anchor, Some([1; 32]));
     }
 }

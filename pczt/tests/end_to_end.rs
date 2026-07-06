@@ -1268,3 +1268,155 @@ fn ironwood_to_ironwood() {
     assert_eq!(tx.ironwood_bundle().map(|b| b.actions().len()), Some(2));
     assert_eq!(u32::from(tx.expiry_height()), 4_134_040);
 }
+/// Ironwood is the v6-native pool: its bundle can be signed before its anchor is
+/// chosen, and re-anchored afterwards without invalidating the signature or changing
+/// the transaction's identifier ([ZIP 374] "Anchors and pre-authorization").
+///
+/// [ZIP 374]: https://zips.z.cash/zip-0374#anchors-and-pre-authorization
+#[test]
+fn ironwood_to_ironwood_reanchoring() {
+    let mut rng = OsRng;
+    let params = zcash_protocol::consensus::TestNetwork;
+    // NU6.3 (and hence the v6 transaction format and the Ironwood pool) activates on
+    // `TestNetwork` at height 4_134_000.
+    let height = zcash_protocol::consensus::BlockHeight::from_u32(4_140_000);
+
+    // Create an Ironwood account to receive funds.
+    let orchard_sk = orchard::keys::SpendingKey::from_bytes([0; 32]).unwrap();
+    let orchard_ask = orchard::keys::SpendAuthorizingKey::from(&orchard_sk);
+    let orchard_fvk = orchard::keys::FullViewingKey::from(&orchard_sk);
+    let orchard_ivk = orchard_fvk.to_ivk(orchard::keys::Scope::External);
+    let orchard_ovk = orchard_fvk.to_ovk(orchard::keys::Scope::External);
+    let recipient = orchard_fvk.address_at(0u32, orchard::keys::Scope::External);
+
+    // Pretend we already received an Ironwood note.
+    let value = orchard::value::NoteValue::from_raw(1_000_000);
+    let note = {
+        let mut orchard_builder = orchard::builder::Builder::new(
+            orchard::builder::BundleType::DEFAULT,
+            orchard::bundle::BundleVersion::ironwood_v3(),
+            orchard::bundle::BundleVersion::ironwood_v3().default_flags(),
+            orchard::Anchor::empty_tree(),
+        )
+        .unwrap();
+        orchard_builder
+            .add_output(None, recipient, value, Memo::Empty.encode().into_bytes())
+            .unwrap();
+        let (bundle, meta) = orchard_builder.build::<i64>(&mut rng).unwrap().unwrap();
+        let action = bundle
+            .actions()
+            .get(meta.output_action_index(0).unwrap())
+            .unwrap();
+        let domain = orchard::note_encryption::IronwoodDomain::for_action(action);
+        let (note, _, _) = try_note_decryption(&domain, &orchard_ivk.prepare(), action).unwrap();
+        note
+    };
+
+    // Use the tree with a single leaf.
+    let (anchor, merkle_path) = {
+        let cmx: orchard::note::ExtractedNoteCommitment = note.commitment().into();
+        let leaf = MerkleHashOrchard::from_cmx(&cmx);
+        let mut tree =
+            ShardTree::<_, 32, 16>::new(MemoryShardStore::<MerkleHashOrchard, u32>::empty(), 100);
+        tree.append(leaf, incrementalmerkletree::Retention::Marked)
+            .unwrap();
+        tree.checkpoint(9_999_999).unwrap();
+        let position = 0.into();
+        let merkle_path = tree
+            .witness_at_checkpoint_depth(position, 0)
+            .unwrap()
+            .unwrap();
+        let anchor = merkle_path.root(leaf);
+        (anchor.into(), merkle_path.into())
+    };
+
+    // Build the transaction spending it and creating change plus a payment, both
+    // within the Ironwood pool.
+    let mut builder = Builder::new(
+        params,
+        height,
+        BuildConfig::Standard {
+            sapling_anchor: None,
+            orchard_anchor: None,
+            ironwood_anchor: Some(anchor),
+        },
+    );
+    builder
+        .add_ironwood_spend::<zip317::FeeRule>(orchard_fvk.clone(), note, merkle_path)
+        .unwrap();
+    builder
+        .add_ironwood_output::<zip317::FeeRule>(
+            Some(orchard_ovk),
+            recipient,
+            Zatoshis::const_from_u64(100_000),
+            MemoBytes::empty(),
+        )
+        .unwrap();
+    builder
+        .add_ironwood_output::<zip317::FeeRule>(
+            Some(orchard_fvk.to_ovk(zip32::Scope::Internal)),
+            orchard_fvk.address_at(0u32, orchard::keys::Scope::Internal),
+            Zatoshis::const_from_u64(890_000),
+            MemoBytes::empty(),
+        )
+        .unwrap();
+    let PcztResult {
+        pczt_parts,
+        ironwood_meta,
+        ..
+    } = builder
+        .build_for_pczt(OsRng, &zip317::FeeRule::standard())
+        .unwrap();
+
+    // Create the base PCZT. It carries the v6 transaction format, since the Ironwood
+    // pool exists only from NU6.3 onward.
+    let pczt = Creator::build_from_parts(pczt_parts).unwrap();
+    check_round_trip(&pczt);
+
+    // Finalize the I/O.
+    let pczt = IoFinalizer::new(pczt).finalize_io().unwrap();
+    check_round_trip(&pczt);
+
+    // Create the Ironwood proof.
+    let pczt = Prover::new(pczt)
+        .create_ironwood_proof(ironwood_proving_key())
+        .unwrap()
+        .finish();
+    check_round_trip(&pczt);
+
+    // Apply signatures. From the v6 transaction format onward, proving and signing are
+    // independent and may occur in either order; here signing happens after proving.
+    let index = ironwood_meta.spend_action_index(0).unwrap();
+    let mut signer = Signer::new(pczt).unwrap();
+    signer.sign_ironwood(index, &orchard_ask).unwrap();
+    let pczt = signer.finish();
+    check_round_trip(&pczt);
+
+    // Extract the fully authorized transaction before re-anchoring, to compare its
+    // identifier against the re-anchored transaction below.
+    let tx_before = TransactionExtractor::new(pczt.clone()).extract().unwrap();
+
+    // Re-anchor: an Updater may replace a v6 bundle's anchor at any point before the
+    // Prover runs for it, without invalidating the existing signature (the v6
+    // signature hash does not commit to the anchor).
+    let pczt = Updater::new(pczt)
+        .set_ironwood_anchor(anchor.to_bytes())
+        .unwrap()
+        .finish();
+    check_round_trip(&pczt);
+
+    // Replacing the anchor must have cleared the existing proof.
+    assert!(Prover::new(pczt.clone()).requires_ironwood_proof());
+
+    // Re-prove and extract again.
+    let pczt = Prover::new(pczt)
+        .create_ironwood_proof(ironwood_proving_key())
+        .unwrap()
+        .finish();
+    check_round_trip(&pczt);
+    let tx_after = TransactionExtractor::new(pczt).extract().unwrap();
+
+    // Re-anchoring does not change the transaction's identifier: the v6 txid excludes
+    // the anchor.
+    assert_eq!(tx_before.txid(), tx_after.txid());
+}

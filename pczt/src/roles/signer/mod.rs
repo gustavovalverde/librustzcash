@@ -36,9 +36,9 @@ use crate::sighash;
 pub struct Signer {
     global: Global,
     transparent: transparent::pczt::Bundle,
-    sapling: sapling::pczt::Bundle,
-    orchard: orchard::pczt::Bundle,
-    ironwood: orchard::pczt::Bundle,
+    sapling: crate::sapling::Parsed,
+    orchard: crate::orchard::Parsed,
+    ironwood: crate::orchard::Parsed,
     empty_ironwood: Option<crate::orchard::Bundle>,
     /// Cached across multiple signatures.
     tx_data: TransactionData<EffectsOnly>,
@@ -64,6 +64,7 @@ impl Signer {
             ironwood,
             tx_data,
         } = pczt.extract_tx_data(
+            crate::common::AnchorRequirement::NotRequired,
             |t| {
                 t.extract_effects()
                     .map_err(ExtractError::TransparentExtract)
@@ -249,6 +250,7 @@ impl Signer {
     {
         let spend = self
             .sapling
+            .bundle
             .spends_mut()
             .get_mut(index)
             .ok_or(Error::InvalidIndex)?;
@@ -314,6 +316,7 @@ impl Signer {
     {
         let action = self
             .orchard
+            .bundle
             .actions_mut()
             .get_mut(index)
             .ok_or(Error::InvalidIndex)?;
@@ -380,6 +383,7 @@ impl Signer {
     {
         let action = self
             .ironwood
+            .bundle
             .actions_mut()
             .get_mut(index)
             .ok_or(Error::InvalidIndex)?;
@@ -426,10 +430,9 @@ impl Signer {
         Pczt {
             global,
             transparent: crate::transparent::Bundle::serialize_from(transparent),
-            sapling: crate::sapling::Bundle::serialize_from(sapling),
-            orchard: crate::orchard::Bundle::serialize_from(orchard),
-            ironwood: empty_ironwood
-                .unwrap_or_else(|| crate::orchard::Bundle::serialize_from(ironwood)),
+            sapling: sapling.reserialize(),
+            orchard: orchard.reserialize(),
+            ironwood: empty_ironwood.unwrap_or_else(|| ironwood.reserialize()),
         }
     }
 }
@@ -451,5 +454,81 @@ pub enum Error {
 impl From<crate::ExtractError> for Error {
     fn from(e: crate::ExtractError) -> Self {
         Error::Extract(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ff::{Field, PrimeField};
+    use pasta_curves::pallas;
+    use zcash_protocol::consensus::BranchId;
+
+    use super::Signer;
+    use crate::{
+        orchard::{Action, Spend},
+        roles::{creator::Creator, io_finalizer::IoFinalizer, updater::Updater},
+    };
+
+    /// Builds a fully-dummy (zero-valued, freshly-random-key) Ironwood action, whose
+    /// spend the IO Finalizer signs itself via `dummy_sk`. This lets the IO Finalizer
+    /// and Signer roles be exercised without going through the transaction builder
+    /// (which requires a concrete anchor to add any real spend).
+    fn dummy_action() -> Action {
+        let sk = orchard::keys::SpendingKey::from_bytes([7; 32]).unwrap();
+        let alpha = pallas::Scalar::ONE;
+        let base = crate::orchard::testing::dummy_action();
+
+        Action {
+            spend: Spend {
+                alpha: Some(alpha.to_repr()),
+                dummy_sk: Some(*sk.to_bytes()),
+                ..base.spend
+            },
+            rcv: Some([3; 32]),
+            ..base
+        }
+    }
+
+    /// [ZIP 374] "Anchors and pre-authorization" requires that, for a v6 transaction,
+    /// signing (including the IO Finalizer's dummy-spend signing) works even while a
+    /// shielded bundle's anchor is absent. The Ironwood bundle here is built by
+    /// hand (rather than via the transaction builder, which requires a concrete
+    /// anchor up front to add any spend) specifically to exercise that state; the
+    /// full sign-then-prove-then-extract pipeline with an initially-absent anchor is
+    /// covered for a bundle with a real, provable spend by the
+    /// `ironwood_to_ironwood_reanchoring` end-to-end test, whose transaction builder
+    /// requires the anchor to be set at the point the spend is added.
+    ///
+    /// [ZIP 374]: https://zips.z.cash/zip-0374#anchors-and-pre-authorization
+    #[test]
+    fn io_finalizer_and_signer_succeed_with_absent_ironwood_anchor() {
+        let mut pczt = Creator::new(BranchId::Nu6_3.into(), 100, 133, None, None)
+            .unwrap()
+            .build();
+        pczt.ironwood.actions.push(dummy_action());
+
+        assert!(pczt.ironwood.anchor.is_none());
+
+        let pczt = IoFinalizer::new(pczt).finalize_io().unwrap();
+        assert!(pczt.ironwood.anchor.is_none());
+        assert!(pczt.ironwood.bsk.is_some());
+        // The IO Finalizer signs and clears the dummy spending key.
+        assert!(pczt.ironwood.actions[0].spend.dummy_sk.is_none());
+        assert!(pczt.ironwood.actions[0].spend.spend_auth_sig.is_some());
+
+        // `Signer::new` computes the shielded sighash and extracts transaction
+        // effects; this must succeed with the anchor still absent (a v6 sighash
+        // does not commit to it).
+        let signer = Signer::new(pczt).unwrap();
+        let pczt = signer.finish();
+        assert!(pczt.ironwood.anchor.is_none());
+
+        // The anchor may now be set by an Updater, at any point before the Prover
+        // runs; nothing about signing required it to be present.
+        let pczt = Updater::new(pczt)
+            .set_ironwood_anchor([9; 32])
+            .unwrap()
+            .finish();
+        assert_eq!(pczt.ironwood.anchor, Some([9; 32]));
     }
 }
